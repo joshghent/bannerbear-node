@@ -383,3 +383,6 @@ export class Bannerbear {
 }
 
 export default Bannerbear;
+
+// V5 API — separate client because V5 API keys are not compatible with V2 endpoints.
+export * from "./v5";

@@ -20,6 +20,238 @@ npm install --save bannerbear
 yarn add bannerbear
 ```
 
+## V5 API
+
+The [V5 API](https://developers.bannerbear.com/v5/) is a new generation of the Bannerbear API. **V5 API keys do not work with V2 endpoints, and V2 API keys do not work with V5 endpoints** — you must use the right client class for your key.
+
+For the **V5 API**, use `BannerbearV5` (this section).
+For the **legacy V2 API**, see [Usage](#usage) below — that section is unchanged.
+
+### Table of Contents
+
+- [Authentication (V5)](#authentication-v5)
+- [Account (V5)](#account-v5)
+- [Image Templates (V5)](#image-templates-v5)
+- [Images (V5)](#images-v5)
+- [Batches (V5)](#batches-v5)
+- [Webhooks (V5)](#webhooks-v5)
+- [Instant URLs (V5)](#instant-urls-v5)
+
+### Authentication (V5)
+
+```ts
+import { BannerbearV5 } from "bannerbear";
+
+const bb = new BannerbearV5("your V5 API key");
+```
+
+Or set `BANNERBEAR_API_KEY` and instantiate without arguments:
+
+```ts
+const bb = new BannerbearV5();
+```
+
+### Account (V5)
+
+```ts
+await bb.account();
+```
+
+### Image Templates (V5)
+
+V5 renames V2's `templates` resource to `image_templates`.
+
+```ts
+await bb.list_image_templates(1);
+await bb.get_image_template("template uid");
+await bb.update_image_template("template uid", {
+  name: "New Name",
+  description: "...",
+  tags: ["portrait"],
+});
+```
+
+### Images (V5)
+
+V5's `modifications` is an **object** with two sub-keys:
+
+- `template` — template-level changes (width, height, etc.)
+- `objects` — array of per-layer changes (equivalent to V2's flat modifications array)
+
+```ts
+await bb.create_image("template uid", {
+  modifications: {
+    template: { width: 1080, height: 1080 },
+    objects: [
+      { name: "headline", text: "Hello World!" },
+      {
+        name: "photo",
+        image_url:
+          "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=1000&q=80",
+      },
+    ],
+  },
+});
+```
+
+Synchronous generation routes to `sync.api.bannerbear.com/v5` (10s timeout). The 3rd positional `synchronous` argument is a transport switch — it is **not** sent in the request body:
+
+```ts
+await bb.create_image("template uid", { modifications: { objects: [...] } }, true);
+```
+
+##### Options for `create_image`
+
+- `modifications`: V5 modifications object (`V5Modifications`)
+- `formats`: output formats, e.g. `["jpg", "pdf"]` (`string[]`)
+- `scale`: scale multiplier, 1–4 (`number`)
+- `dpi`: DPI metadata (`number`)
+- `quality`: quality control (`number`)
+- `proxy`: proxy server for asset fetching (`string`)
+- `metadata`: include any metadata to reference at a later point (`string`)
+- `version`: pin template version (`number`)
+- 3rd positional `synchronous`: route to the sync host (`boolean`; SDK-only, not sent to the API)
+
+```ts
+await bb.get_image("image uid");
+await bb.list_images(1);
+```
+
+### Batches (V5)
+
+Generate multiple images in one request (up to 100).
+
+```ts
+await bb.create_batch({
+  type: "image",
+  items: [
+    { template: "template uid 1", modifications: { objects: [...] } },
+    { template: "template uid 2", modifications: { objects: [...] } },
+  ],
+});
+await bb.get_batch("batch uid");
+await bb.list_batches(1);
+```
+
+### Webhooks (V5)
+
+Webhooks are managed as a first-class resource in V5 (instead of being a per-request `webhook_url` parameter).
+
+```ts
+const hook = await bb.create_webhook({
+  name: "my-webhook",
+  url: "https://example.com/hook",
+  resource: "image",
+  event: "completed",
+  status: "active",
+  scope: "all",
+  templates: [],
+});
+
+// IMPORTANT: signing_key is ONLY returned in the create response. Store it now —
+// subsequent get_webhook calls will not include it.
+console.log(hook.signing_key);
+```
+
+CRUD:
+
+```ts
+await bb.get_webhook("webhook uid");
+await bb.update_webhook("webhook uid", {
+  name: "renamed",
+  url: "https://example.com/hook",
+  resource: "image",
+  event: "completed",
+  status: "active",
+  scope: "all",
+});
+await bb.delete_webhook("webhook uid");
+await bb.list_webhooks(1);
+```
+
+### Instant URLs (V5)
+
+Instant URLs are URLs bound to a template that can be manipulated with query strings — the V5 equivalent of V2's "Signed URLs" feature.
+
+#### Create an Instant URL base
+
+```ts
+const iurl = await bb.create_instant_url({
+  name: "my-instant-url",
+  template: "template uid",
+  mode: "encoded",       // or "named_params"
+  security: "signed",    // or "open"
+  status: "active",
+  scale: 1,              // 1, 2, 3, or 4
+});
+
+// IMPORTANT: signing_key is ONLY returned in the create response. Store it now.
+console.log(iurl.signing_key);
+console.log(iurl.base_url);
+```
+
+##### Options for `create_instant_url` / `update_instant_url`
+
+- `name` *required* (`string`)
+- `template` *required* — image template UID (`string`)
+- `mode`: `"encoded"` or `"named_params"` (`string`)
+- `security`: `"signed"` or `"open"` (`string`)
+- `status`: `"active"` or `"disabled"` (`string`)
+- `scale`: 1, 2, 3, or 4 (`number`)
+- `rate_limit`: enable per-IP rate limiting (`boolean`)
+- `template_version`: pin template version (`number | null`)
+- `max_renders`: cap total renders (`number | null`)
+- `expires_at`: ISO 8601 expiry (`string | null`)
+
+CRUD:
+
+```ts
+await bb.get_instant_url("uid");
+await bb.update_instant_url("uid", { name: "...", template: "...", /* ... */ });
+await bb.delete_instant_url("uid");
+await bb.list_instant_urls(1);
+```
+
+#### Build an Instant URL with modifications
+
+`build_instant_url` is a pure local helper — no API call. It composes the URL from a base + modifications and, if a signing key is provided, appends the HMAC signature.
+
+```ts
+// Encoded mode, signed
+bb.build_instant_url(iurl.base_url, {
+  mode: "encoded",
+  signingKey: iurl.signing_key,
+  modifications: {
+    template: { width: 1030, height: 890 },
+    objects: [{ name: "title", text: "Hello!", color: "#ffffff" }],
+  },
+});
+
+// Named params mode, signed
+bb.build_instant_url(iurl.base_url, {
+  mode: "named_params",
+  signingKey: iurl.signing_key,
+  modifications: {
+    template: { width: 1030, height: 890 },
+    objects: [{ name: "title", text: "Hello!" }],
+  },
+});
+
+// Open (unsigned): omit signingKey
+bb.build_instant_url(iurl.base_url, {
+  mode: "encoded",
+  modifications: { objects: [{ name: "title", text: "Hello!" }] },
+});
+```
+
+##### Options for `build_instant_url`
+
+- `mode`: `"encoded"` (default) or `"named_params"` (`string`)
+- `signingKey`: only needed when the instant URL was created with `security: "signed"` (`string`; SDK-only camelCase since this is not an API field)
+- `modifications`: same shape as `create_image`'s modifications (`V5Modifications`)
+
+---
+
 ## Usage
 
 ### Table of Contents
