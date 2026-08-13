@@ -33,6 +33,9 @@ For the **legacy V2 API**, see [Usage](#usage) below — that section is unchang
 - [Account (V5)](#account-v5)
 - [Image Templates (V5)](#image-templates-v5)
 - [Images (V5)](#images-v5)
+- [Tools (V5)](#tools-v5)
+- [Assets (V5)](#assets-v5)
+- [Publications (V5)](#publications-v5)
 - [Batches (V5)](#batches-v5)
 - [Webhooks (V5)](#webhooks-v5)
 - [Instant URLs (V5)](#instant-urls-v5)
@@ -59,17 +62,44 @@ await bb.account();
 
 ### Image Templates (V5)
 
-V5 renames V2's `templates` resource to `image_templates`.
+V5 renames V2's `templates` resource to `image_templates`. Templates can be created, updated, and deleted through the API — `config` holds the full canvas.
 
 ```ts
 await bb.list_image_templates(1);
 await bb.get_image_template("template uid");
+
+await bb.create_image_template({
+  name: "My Template",
+  description: "Created from the API",
+  tags: ["portrait"],
+  width: 1080,
+  height: 1080,
+  config: {
+    objects: [
+      { id: "bg", type: "rectangle", left: 0, top: 0, width: 1080, height: 1080, "background-color": "#0f172a" },
+      { id: "headline", type: "text", left: 80, top: 400, width: 920, text: "Hello World!", "font-size": 72, color: "#ffffff" },
+    ],
+  },
+});
+
 await bb.update_image_template("template uid", {
   name: "New Name",
   description: "...",
   tags: ["portrait"],
 });
+
+await bb.delete_image_template("template uid");
 ```
+
+##### Options for `create_image_template` / `update_image_template`
+
+- `name` *required for create* (`string`)
+- `description` (`string`)
+- `tags` (`string[]`)
+- `width` / `height`: canvas size in pixels (`number`)
+- `config`: full canvas configuration, `{ objects: [...] }`. Passing it **replaces** the existing config in place (`V5TemplateConfig`)
+
+Deleting is a soft delete: images already rendered from the template stay intact, but the template no longer appears in list/get calls and cannot be used for new renders.
 
 ### Images (V5)
 
@@ -107,7 +137,7 @@ await bb.create_image("template uid", { modifications: { objects: [...] } }, tru
 - `scale`: scale multiplier, 1–4 (`number`)
 - `dpi`: DPI metadata (`number`)
 - `quality`: quality control (`number`)
-- `proxy`: proxy server for asset fetching (`string`)
+- `proxy`: proxy and resize external images before rendering (`boolean`)
 - `metadata`: include any metadata to reference at a later point (`string`)
 - `version`: pin template version (`number`)
 - 3rd positional `synchronous`: route to the sync host (`boolean`; SDK-only, not sent to the API)
@@ -117,13 +147,121 @@ await bb.get_image("image uid");
 await bb.list_images(1);
 ```
 
+### Tools (V5)
+
+Tools are standalone media operations that do not use a template. Every tool is **asynchronous**: the call returns a pending *tool job*. Poll `get_tool_job` until the status is `"completed"` or `"failed"`, or subscribe to a webhook with the resource `"tool_job"`.
+
+```ts
+let job = await bb.trim_video({
+  video_url: "https://example.com/clip.mp4",
+  start: 2.5,
+  end: 10.0,
+});
+
+job = await bb.get_tool_job(job.uid);
+job.status; // "pending" | "running" | "completed" | "failed"
+if (job.status === "completed") console.log(job.outputs?.video_url);
+
+await bb.list_tool_jobs(1);
+```
+
+Every tool also accepts an optional `metadata` string.
+
+| Method | Required | Optional | Output key |
+| --- | --- | --- | --- |
+| `remove_bg` | `image_url` | — | `image_url` |
+| `create_pdf` | `urls` | — | `pdf_url` |
+| `trim_video` | `video_url`, `start`, `end` | — | `video_url` |
+| `concat_videos` | `video_urls` | `width`, `height` | `video_url` |
+| `resize_video` | `video_url`, `width`, `height` | `fit` | `video_url` |
+| `crop_video` | `video_url`, `x`, `y`, `width`, `height` | — | `video_url` |
+| `overlay_video` | `base_video_url`, `overlay_video_url`, `x`, `y` | `scale`, `start` | `video_url` |
+| `overlay_image` | `video_url`, `image_url`, `x`, `y` | `opacity` | `video_url` |
+| `subtitle_video` | `video_url` | `language`, `font`, `font_size`, `color`, `bold`, `italic`, `outline_color`, `outline_width`, `shadow_size`, `shadow_color`, `background_style`, `background_color`, `alignment` | `video_url` |
+| `generate_voiceover` | `text`, `voice` | — | `audio_url` |
+| `add_audio` | `video_url`, `audio_url`, `mode` | `volume`, `loop`, `ducking` | `video_url` |
+| `add_cover_art` | `video_url`, `image_url` | — | `video_url` |
+| `create_video_slideshow` | `image_urls` | `slide_duration`, `transition`, `transition_duration`, `width`, `height` | `video_url` |
+| `apply_color_filter` | `video_url`, `filter` | — | `video_url` |
+| `soften_video` | `video_url`, `strength` | — | `video_url` |
+
+A few examples:
+
+```ts
+await bb.remove_bg({ image_url: "https://example.com/product.png" });
+
+await bb.subtitle_video({
+  video_url: "https://example.com/talk.mp4",
+  font: "montserrat",
+  font_size: 32,
+  color: "#ffffff",
+  background_style: "outline",
+  alignment: "2",
+});
+
+await bb.generate_voiceover({ text: "Welcome to Bannerbear.", voice: "rachel" });
+
+await bb.create_video_slideshow({
+  image_urls: ["https://example.com/1.jpg", "https://example.com/2.jpg"],
+  slide_duration: 3,
+  transition: "fade",
+  width: 1280,
+  height: 720,
+});
+```
+
+`create_tool_job` calls any tool by name — the escape hatch for tools added after this release:
+
+```ts
+await bb.create_tool_job("remove_bg", { image_url: "https://example.com/product.png" });
+```
+
+### Assets (V5)
+
+Upload a file (max 5MB) and get back a durable CDN URL you can feed to image modifications or tools. Uploads are deduplicated per workspace by SHA-256, so re-uploading the same bytes returns the existing record instead of creating a duplicate.
+
+```ts
+import fs from "fs";
+
+const asset = await bb.upload_asset(fs.readFileSync("logo.png"), "image/png");
+console.log(asset.url);
+
+await bb.get_asset("asset uid");
+await bb.list_assets(1);
+```
+
+Accepted mime types: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `video/mp4`, `video/webm`, `video/quicktime`, `audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/webm`, `audio/ogg`, `application/pdf`.
+
+`check_assets` maps each SHA-256 content hash to its existing asset (or `null`), so a syncing client can skip the upload round-trip for content it already pushed. Max 100 hashes per call.
+
+```ts
+import crypto from "crypto";
+
+const data = fs.readFileSync("logo.png");
+const digest = crypto.createHash("sha256").update(data).digest("hex");
+const found = await bb.check_assets([digest]);
+if (!found[digest]) await bb.upload_asset(data, "image/png");
+```
+
+### Publications (V5)
+
+Publications are templates published to the public library. Installing one clones it into your workspace as a new image template.
+
+```ts
+await bb.list_publications(1);
+await bb.get_publication("publication uid");
+
+const template = await bb.install_publication("publication uid");
+console.log(template.uid);
+```
+
 ### Batches (V5)
 
 Generate multiple images in one request (up to 100).
 
 ```ts
 await bb.create_batch({
-  type: "image",
+  type: "images",
   items: [
     { template: "template uid 1", modifications: { objects: [...] } },
     { template: "template uid 2", modifications: { objects: [...] } },
@@ -144,7 +282,7 @@ const hook = await bb.create_webhook({
   resource: "image",
   event: "completed",
   status: "active",
-  scope: "all",
+  scope: "all_templates",
   templates: [],
 });
 
@@ -152,6 +290,16 @@ const hook = await bb.create_webhook({
 // subsequent get_webhook calls will not include it.
 console.log(hook.signing_key);
 ```
+
+##### Options for `create_webhook` / `update_webhook`
+
+- `name` *required* (`string`)
+- `url` *required* — the URL that receives the events (`string`)
+- `resource`: `"image"`, `"batch"`, or `"tool_job"`
+- `event`: `"all_events"`, `"completed"`, or `"failed"`
+- `status`: `"active"` or `"disabled"`
+- `scope`: `"all_templates"` or `"specific_templates"`
+- `templates`: template UIDs, used when `scope` is `"specific_templates"` (`string[]`)
 
 CRUD:
 
@@ -163,7 +311,7 @@ await bb.update_webhook("webhook uid", {
   resource: "image",
   event: "completed",
   status: "active",
-  scope: "all",
+  scope: "all_templates",
 });
 await bb.delete_webhook("webhook uid");
 await bb.list_webhooks(1);
