@@ -61,6 +61,49 @@ export interface UpdateImageTemplateV5Params {
   config?: V5TemplateConfig;
 }
 
+export interface CreateAnimationTemplateV5Params {
+  name: string;
+  description?: string;
+  tags?: string[];
+  width?: number;
+  height?: number;
+  frame_rate?: 24 | 30 | 60;
+}
+
+export interface UpdateAnimationTemplateV5Params {
+  name?: string;
+  description?: string;
+  tags?: string[];
+  width?: number;
+  height?: number;
+  frame_rate?: 24 | 30 | 60;
+}
+
+export interface V5AnimationModifications {
+  // Template-level output overrides.
+  template?: {
+    width?: number;
+    height?: number;
+    fps?: 24 | 30 | 60;
+    // Forces a MOV output so the alpha channel survives.
+    transparent?: boolean;
+    [key: string]: any;
+  };
+  objects?: Array<{ name: string; [key: string]: any }>;
+}
+
+export interface CreateAnimationV5Params {
+  modifications: V5AnimationModifications;
+  // Ignored when `transparent` is set — that always yields MOV.
+  formats?: Array<"mp4" | "mov">;
+  metadata?: string;
+}
+
+export interface CreateWorkflowRunV5Params {
+  // Values for the workflow's declared inputs.
+  inputs?: Record<string, any>;
+}
+
 export interface CreateBatchV5Params {
   type: string;
   items: any[];
@@ -69,11 +112,9 @@ export interface CreateBatchV5Params {
 export interface WebhookV5Params {
   name: string;
   url: string;
-  resource?: "image" | "batch" | "tool_job";
+  resource?: "image" | "batch" | "tool_job" | "workflow_run" | "animation";
   event?: "all_events" | "completed" | "failed";
   status?: "active" | "disabled";
-  scope?: "all_templates" | "specific_templates";
-  templates?: string[];
 }
 
 // =================================
@@ -105,14 +146,16 @@ export interface ConcatVideosV5Params extends ToolV5BaseParams {
   video_urls: string[];
   width?: number;
   height?: number;
+  // Defaults to the highest frame rate among the inputs, capped at 60.
+  fps?: number;
 }
 
 export interface ResizeVideoV5Params extends ToolV5BaseParams {
   video_url: string;
   width: number;
   height: number;
-  // cover crops, contain letterboxes.
-  fit?: "cover" | "contain";
+  // cover crops, contain letterboxes, blur fills the bars with a blurred copy.
+  fit?: "cover" | "contain" | "blur";
 }
 
 export interface CropVideoV5Params extends ToolV5BaseParams {
@@ -123,11 +166,27 @@ export interface CropVideoV5Params extends ToolV5BaseParams {
   height: number;
 }
 
+// Snap position for the overlay tools. Use `position` or `x`/`y`, not both.
+export type OverlayPositionV5 =
+  | "top_left"
+  | "top_center"
+  | "top_right"
+  | "center"
+  | "bottom_left"
+  | "bottom_center"
+  | "bottom_right";
+
 export interface OverlayVideoV5Params extends ToolV5BaseParams {
   base_video_url: string;
   overlay_video_url: string;
-  x: number;
-  y: number;
+  // Absolute position from the left. Ignored when `position` is set.
+  x?: number;
+  // Absolute position from the top. Ignored when `position` is set.
+  y?: number;
+  // Snap to a corner or edge. Use this or x/y, not both.
+  position?: OverlayPositionV5;
+  // Gap from the edge when using `position`. Defaults to 0.
+  margin?: number;
   // 1.0 = original size.
   scale?: number;
   // When the overlay begins, in seconds.
@@ -137,8 +196,14 @@ export interface OverlayVideoV5Params extends ToolV5BaseParams {
 export interface OverlayImageV5Params extends ToolV5BaseParams {
   video_url: string;
   image_url: string;
-  x: number;
-  y: number;
+  // Absolute position from the left. Ignored when `position` is set.
+  x?: number;
+  // Absolute position from the top. Ignored when `position` is set.
+  y?: number;
+  // Snap to a corner or edge. Use this or x/y, not both.
+  position?: OverlayPositionV5;
+  // Gap from the edge when using `position`. Defaults to 0.
+  margin?: number;
   // 0.0 to 1.0.
   opacity?: number;
 }
@@ -239,12 +304,69 @@ export interface ImageTemplateV5 {
   tags?: string[];
   width?: number;
   height?: number;
-  adaptive?: boolean;
+  responsive?: boolean;
   preview?: string;
   ui_write_access?: "owner_only" | "team";
   api_write_access?: "team" | "owner_only" | "nobody";
   config?: V5TemplateConfig;
   created_at?: string;
+}
+
+export interface AnimationTemplateV5 {
+  uid: string;
+  name: string;
+  description?: string | null;
+  tags?: string[];
+  width?: number;
+  height?: number;
+  frame_rate?: 24 | 30 | 60;
+  duration_seconds?: number;
+  preview?: string | null;
+  ui_write_access?: "owner_only" | "team";
+  api_write_access?: "team" | "owner_only" | "nobody";
+  config?: V5TemplateConfig;
+  created_at?: string;
+}
+
+export interface AnimationV5 {
+  uid: string;
+  status: "queued" | "rendering" | "completed" | "failed";
+  template: string;
+  progress?: number;
+  // Keyed by format, e.g. { mp4: "https://..." }.
+  files?: Record<string, string>;
+  metadata?: string | null;
+  self?: string;
+  error?: string | null;
+  created_at?: string;
+  completed_at?: string | null;
+}
+
+export interface WorkflowV5 {
+  uid: string;
+  name: string;
+  description?: string | null;
+  tags?: string[];
+  // The workflow's declared inputs, keyed by input name.
+  inputs?: Record<string, any>;
+  steps?: Array<Record<string, any>>;
+  ui_write_access?: "owner_only" | "team";
+  api_write_access?: "team" | "owner_only" | "nobody";
+  created_at?: string;
+}
+
+export interface WorkflowRunV5 {
+  uid: string;
+  workflow: string;
+  status: "queued" | "running" | "completed" | "failed";
+  progress?: number;
+  inputs?: Record<string, any>;
+  outputs?: Record<string, any>;
+  steps?: Array<Record<string, any>>;
+  self?: string;
+  error?: string | null;
+  created_at?: string;
+  completed_at?: string | null;
 }
 
 export interface ToolJobV5 {
@@ -308,8 +430,6 @@ export interface WebhookV5 {
   resource?: string;
   event?: string;
   status?: string;
-  scope?: string;
-  templates?: string[];
   // Only returned at creation — store it now.
   signing_key?: string;
   created_at?: string;
@@ -416,6 +536,80 @@ export class BannerbearV5 {
   public async list_images(page?: number): Promise<ImageV5[]> {
     const qs = page ? `?page=${page}` : "";
     return this.request("GET", `/images${qs}`) as Promise<ImageV5[]>;
+  }
+
+  // ---------- Animation Templates ----------
+
+  public async list_animation_templates(page?: number): Promise<AnimationTemplateV5[]> {
+    const qs = page ? `?page=${page}` : "";
+    return this.request("GET", `/animation_templates${qs}`) as Promise<AnimationTemplateV5[]>;
+  }
+
+  public async get_animation_template(uid: string): Promise<AnimationTemplateV5> {
+    return this.request("GET", `/animation_templates/${uid}`) as Promise<AnimationTemplateV5>;
+  }
+
+  public async create_animation_template(params: CreateAnimationTemplateV5Params): Promise<AnimationTemplateV5> {
+    return this.request("POST", "/animation_templates", params) as Promise<AnimationTemplateV5>;
+  }
+
+  public async update_animation_template(
+    uid: string,
+    params: UpdateAnimationTemplateV5Params
+  ): Promise<AnimationTemplateV5> {
+    return this.request("PATCH", `/animation_templates/${uid}`, params) as Promise<AnimationTemplateV5>;
+  }
+
+  public async delete_animation_template(uid: string): Promise<null> {
+    return this.request("DELETE", `/animation_templates/${uid}`) as Promise<null>;
+  }
+
+  // ---------- Animations ----------
+  //
+  // Rendering is always asynchronous — there is no synchronous host for
+  // animations. Poll get_animation until the status is "completed" or "failed",
+  // or subscribe to a webhook with the resource "animation".
+
+  public async create_animation(template: string, params: CreateAnimationV5Params): Promise<AnimationV5> {
+    return this.request("POST", "/animations", { ...params, template }) as Promise<AnimationV5>;
+  }
+
+  public async get_animation(uid: string): Promise<AnimationV5> {
+    return this.request("GET", `/animations/${uid}`) as Promise<AnimationV5>;
+  }
+
+  public async list_animations(page?: number): Promise<AnimationV5[]> {
+    const qs = page ? `?page=${page}` : "";
+    return this.request("GET", `/animations${qs}`) as Promise<AnimationV5[]>;
+  }
+
+  // ---------- Workflows ----------
+
+  public async list_workflows(page?: number): Promise<WorkflowV5[]> {
+    const qs = page ? `?page=${page}` : "";
+    return this.request("GET", `/workflows${qs}`) as Promise<WorkflowV5[]>;
+  }
+
+  public async get_workflow(uid: string): Promise<WorkflowV5> {
+    return this.request("GET", `/workflows/${uid}`) as Promise<WorkflowV5>;
+  }
+
+  // ---------- Workflow Runs ----------
+  //
+  // A run is asynchronous. Poll get_workflow_run until the status is "completed"
+  // or "failed", or subscribe to a webhook with the resource "workflow_run".
+
+  public async create_workflow_run(workflow: string, params: CreateWorkflowRunV5Params = {}): Promise<WorkflowRunV5> {
+    return this.request("POST", "/workflow_runs", { ...params, workflow }) as Promise<WorkflowRunV5>;
+  }
+
+  public async get_workflow_run(uid: string): Promise<WorkflowRunV5> {
+    return this.request("GET", `/workflow_runs/${uid}`) as Promise<WorkflowRunV5>;
+  }
+
+  public async list_workflow_runs(page?: number): Promise<WorkflowRunV5[]> {
+    const qs = page ? `?page=${page}` : "";
+    return this.request("GET", `/workflow_runs${qs}`) as Promise<WorkflowRunV5[]>;
   }
 
   // ---------- Tools ----------
